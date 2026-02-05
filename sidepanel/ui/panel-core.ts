@@ -5,26 +5,57 @@ import { bindSidebarNavigation } from './panel-navigation.js';
 import { SidePanelUI } from './panel-ui.js';
 
 (SidePanelUI.prototype as any).init = async function init() {
-  console.log('[Parchi] init() starting...');
+  console.log('[AI Browser] init() starting...');
+  
+  // Re-query elements in case they weren't found during construction
+  // (elements are loaded dynamically via loadPanelLayout)
+  const missingElements: string[] = [];
+  if (!this.elements.chatInterface) missingElements.push('chatInterface');
+  if (!this.elements.historyPanel) missingElements.push('historyPanel');
+  if (!this.elements.sidebar) missingElements.push('sidebar');
+  if (!this.elements.historyItems) missingElements.push('historyItems');
+  
+  if (missingElements.length > 0) {
+    console.warn('[AI Browser] Elements missing, re-querying:', missingElements);
+    const { getSidePanelElements } = await import('./panel-elements.js');
+    this.elements = { ...this.elements, ...getSidePanelElements() };
+  }
+  
+  console.log('[AI Browser] Elements check:', {
+    chatInterface: !!this.elements.chatInterface,
+    historyPanel: !!this.elements.historyPanel,
+    sidebar: !!this.elements.sidebar,
+    historyItems: !!this.elements.historyItems,
+  });
+  
   this.setupEventListeners();
   this.setupPlanDrawer();
   this.setupResizeObserver();
-  // Start with sidebar closed by default
-  this.elements.sidebar?.classList.add('closed');
-  console.log('[Parchi] Calling loadSettings...');
+  // Sidebar state will be set after checking access state
+  // Don't close it yet to avoid hiding auth panel when user needs to sign in
+  console.log('[AI Browser] Calling loadSettings...');
   await this.loadSettings();
-  console.log('[Parchi] loadSettings done, configs:', Object.keys(this.configs), 'current:', this.currentConfig);
-  console.log('[Parchi] Config details:', JSON.stringify(this.configs[this.currentConfig] || {}).slice(0, 200));
+  console.log('[AI Browser] loadSettings done, configs:', Object.keys(this.configs), 'current:', this.currentConfig);
+  console.log('[AI Browser] Config details:', JSON.stringify(this.configs[this.currentConfig] || {}).slice(0, 200));
   await this.loadHistoryList();
   await this.loadAccessState();
-  if (this.isAccessReady()) {
+
+  // IMPORTANT: when access is not ready, updateAccessUI() hides the main chat UI.
+  // The access (auth/billing) UI lives inside the sidebar, which is closed by default.
+  // If we don't open it here, the user sees a blank/dark screen with no way to recover.
+  if (!this.isAccessReady()) {
+    this.openAccountPanel();
+  } else {
+    this.openChatView();
     this.updateStatus('Ready', 'success');
   }
+
   this.updateModelDisplay();
-  console.log('[Parchi] Calling fetchAvailableModels...');
+
+  console.log('[AI Browser] Calling fetchAvailableModels...');
   this.fetchAvailableModels();
   this.updateChatEmptyState?.();
-  console.log('[Parchi] init() complete');
+  console.log('[AI Browser] init() complete');
 };
 
 (SidePanelUI.prototype as any).setupEventListeners = function setupEventListeners() {
@@ -267,6 +298,17 @@ import { SidePanelUI } from './panel-ui.js';
     this.updateActivityState();
     this.activeToolName = null;
     this.displayToolExecution(message.tool, message.args, message.result, message.id);
+    
+    // Save tool call to displayHistory for persistence
+    const toolEntry = createMessage({
+      role: 'tool',
+      toolCallId: message.id,
+      toolName: message.tool,
+      content: JSON.stringify({ args: message.args, result: message.result }),
+    });
+    if (toolEntry) {
+      this.displayHistory.push(toolEntry);
+    }
     return;
   }
 

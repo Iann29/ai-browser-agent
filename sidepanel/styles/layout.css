@@ -90,7 +90,15 @@
   margin-top: 8px;
 }
 
+/* Main Content */
+/* NOTE: this was duplicated earlier in this file. Keeping a single definition avoids confusion
+   when debugging layout issues. */
 .main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  position: relative;
   order: 1; /* Keep main content on left */
 }
 
@@ -203,15 +211,6 @@
   gap: 6px;
 }
 
-/* Main Content - keep existing styles, order set above */
-.main-content {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  position: relative;
-  order: 1;
-}
 
 /* Topbar */
 .topbar {

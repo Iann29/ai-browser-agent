@@ -2,12 +2,19 @@ import { setSidebarOpen, showRightPanel as showRightPanelContent, updateNavActiv
 import { SidePanelUI } from './panel-ui.js';
 
 (SidePanelUI.prototype as any).switchView = function switchView(view: 'chat' | 'history') {
+  console.log('[AI Browser] switchView called:', view, 'accessReady:', this.isAccessReady());
   if (!this.isAccessReady()) {
     this.updateAccessUI();
     return;
   }
   this.currentView = view;
-  if (!this.elements.chatInterface || !this.elements.historyPanel) return;
+  if (!this.elements.chatInterface || !this.elements.historyPanel) {
+    console.error('[AI Browser] switchView: missing elements:', {
+      chatInterface: !!this.elements.chatInterface,
+      historyPanel: !!this.elements.historyPanel,
+    });
+    return;
+  }
   if (view === 'history') {
     this.recordScrollPosition();
     this.elements.chatInterface.classList.add('hidden');
@@ -44,12 +51,14 @@ import { SidePanelUI } from './panel-ui.js';
 };
 
 (SidePanelUI.prototype as any).openChatView = function openChatView() {
+  console.log('[AI Browser] openChatView called');
   this.settingsOpen = false;
   this.accessPanelVisible = false;
   this.showRightPanel(null);
   this.switchView('chat');
   this.setNavActive('chat');
   this.updateAccessUI();
+  console.log('[AI Browser] openChatView complete');
 };
 
 (SidePanelUI.prototype as any).openHistoryPanel = function openHistoryPanel() {

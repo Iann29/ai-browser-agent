@@ -33,17 +33,24 @@ import { SidePanelUI } from './panel-ui.js';
 };
 
 (SidePanelUI.prototype as any).loadHistoryList = async function loadHistoryList() {
-  if (!this.elements.historyItems) return;
+  console.log('[History] loadHistoryList called, historyItems:', !!this.elements.historyItems);
+  if (!this.elements.historyItems) {
+    console.warn('[History] historyItems element not found, cannot load history list');
+    return;
+  }
 
-  const saveEnabled = this.elements.saveHistory?.value !== 'false';
+  const saveHistoryValue = this.elements.saveHistory?.value;
+  const saveEnabled = saveHistoryValue !== 'false';
+  console.log('[History] saveHistory value:', saveHistoryValue, 'enabled:', saveEnabled);
   if (!saveEnabled) {
     this.elements.historyItems.innerHTML =
-      '<div class="history-empty">History is off. Enable “Save History” in Settings to see past chats.</div>';
+      '<div class="history-empty">History is off. Enable "Save History" in Settings to see past chats.</div>';
     return;
   }
   
   try {
     const { chatSessions = [] } = await chrome.storage.local.get(['chatSessions']);
+    console.log('[History] chatSessions found:', chatSessions.length, 'sessions');
     this.elements.historyItems.innerHTML = '';
     
     if (!chatSessions.length) {
@@ -153,6 +160,39 @@ import { SidePanelUI } from './panel-ui.js';
   this.displayHistory.forEach((msg: any) => {
     if (msg.role === 'system' || msg.meta?.kind === 'summary') {
       this.displaySummaryMessage(msg);
+      return;
+    }
+    if (msg.role === 'tool') {
+      // Render tool execution from history
+      const toolName = msg.toolName || msg.name || 'tool';
+      let args: Record<string, unknown> = {};
+      let result: unknown = null;
+      try {
+        const parsed = typeof msg.content === 'string' ? JSON.parse(msg.content) : msg.content;
+        args = (parsed as any)?.args || {};
+        result = (parsed as any)?.result;
+      } catch {
+        result = msg.content;
+      }
+      const resultObj = result as Record<string, unknown> | null;
+      const isError = resultObj && typeof resultObj === 'object' && (resultObj.error || resultObj.success === false);
+      const argsPreview = this.getArgsPreview?.(args) || '';
+      const resultText = this.truncateText?.(this.safeJsonStringify?.(result) || '', 500) || '';
+      
+      const toolDiv = document.createElement('div');
+      toolDiv.className = `tool-tree-item ${isError ? 'error' : 'success'}`;
+      toolDiv.innerHTML = `
+          <span class="tool-tree-status"></span>
+          <div class="tool-tree-content">
+            <div class="tool-tree-header">
+              <span class="tool-tree-name">${this.escapeHtml(toolName)}</span>
+              <span class="tool-tree-args">${this.escapeHtml(argsPreview)}</span>
+            </div>
+            <span class="tool-tree-meta">${isError ? 'Error' : 'Done'}</span>
+            ${resultText ? `<div class="tool-tree-result" style="font-size: 11px; color: var(--muted); margin-top: 4px; white-space: pre-wrap; word-break: break-word;">${this.escapeHtml(resultText)}</div>` : ''}
+          </div>
+        `;
+      this.elements.chatMessages.appendChild(toolDiv);
       return;
     }
     if (msg.role === 'user') {
