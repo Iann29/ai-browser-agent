@@ -3,8 +3,9 @@ import { dedupeThinking, extractThinking } from '../../ai/message-utils.js';
 import { SidePanelUI } from './panel-ui.js';
 
 (SidePanelUI.prototype as any).persistHistory = async function persistHistory() {
-  // Default to saving history unless explicitly disabled
-  const saveEnabled = this.elements.saveHistory?.value !== 'false';
+  // Default to saving history unless explicitly disabled in config
+  const config = this.configs?.[this.currentConfig];
+  const saveEnabled = config?.saveHistory !== false;
   if (!saveEnabled) return;
   
   // Only persist if there's actual content
@@ -39,9 +40,10 @@ import { SidePanelUI } from './panel-ui.js';
     return;
   }
 
-  const saveHistoryValue = this.elements.saveHistory?.value;
-  const saveEnabled = saveHistoryValue !== 'false';
-  console.log('[History] saveHistory value:', saveHistoryValue, 'enabled:', saveEnabled);
+  // Read saveHistory from config (not DOM element, which may not be populated yet during init)
+  const config = this.configs?.[this.currentConfig];
+  const saveEnabled = config?.saveHistory !== false;
+  console.log('[History] saveHistory from config:', config?.saveHistory, 'enabled:', saveEnabled);
   if (!saveEnabled) {
     this.elements.historyItems.innerHTML =
       '<div class="history-empty">History is off. Enable "Save History" in Settings to see past chats.</div>';
@@ -58,7 +60,9 @@ import { SidePanelUI } from './panel-ui.js';
       return;
     }
     
+    console.log('[History] Rendering sessions, historyItems element:', this.elements.historyItems, 'id:', this.elements.historyItems?.id);
     chatSessions.forEach((session: any) => {
+      console.log('[History] Rendering session:', session.title, session.id);
       const item = document.createElement('div');
       item.className = 'history-item';
       const date = new Date(session.updatedAt || session.startedAt || Date.now());

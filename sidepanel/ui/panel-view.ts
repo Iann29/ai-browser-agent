@@ -1,33 +1,22 @@
 import { setSidebarOpen, showRightPanel as showRightPanelContent, updateNavActive } from './panel-navigation.js';
 import { SidePanelUI } from './panel-ui.js';
 
-(SidePanelUI.prototype as any).switchView = function switchView(view: 'chat' | 'history') {
+(SidePanelUI.prototype as any).switchView = function switchView(view: 'chat') {
   console.log('[AI Browser] switchView called:', view, 'accessReady:', this.isAccessReady());
   if (!this.isAccessReady()) {
     this.updateAccessUI();
     return;
   }
   this.currentView = view;
-  if (!this.elements.chatInterface || !this.elements.historyPanel) {
-    console.error('[AI Browser] switchView: missing elements:', {
-      chatInterface: !!this.elements.chatInterface,
-      historyPanel: !!this.elements.historyPanel,
-    });
+  if (!this.elements.chatInterface) {
+    console.error('[AI Browser] switchView: missing chatInterface element');
     return;
   }
-  if (view === 'history') {
-    this.recordScrollPosition();
-    this.elements.chatInterface.classList.add('hidden');
-    this.elements.historyPanel.classList.remove('hidden');
-    this.elements.viewHistoryBtn?.classList.add('active');
-    this.elements.viewChatBtn?.classList.remove('active', 'live-active');
-  } else {
-    this.elements.chatInterface.classList.remove('hidden');
-    this.elements.historyPanel.classList.add('hidden');
-    this.elements.viewChatBtn?.classList.add('active', 'live-active');
-    this.elements.viewHistoryBtn?.classList.remove('active');
-    this.restoreScrollPosition();
-  }
+  // Only manage chatInterface visibility - historyPanel in sidebar is controlled by showRightPanel
+  this.elements.chatInterface.classList.remove('hidden');
+  this.elements.viewChatBtn?.classList.add('active', 'live-active');
+  this.elements.viewHistoryBtn?.classList.remove('active');
+  this.restoreScrollPosition();
 };
 
 (SidePanelUI.prototype as any).openSidebar = function openSidebar() {
