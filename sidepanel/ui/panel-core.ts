@@ -315,6 +315,12 @@ import { SidePanelUI } from './panel-ui.js';
   if (message.type === 'assistant_final') {
     this.displayAssistantMessage(message.content, message.thinking, message.usage, message.model);
     this.appendContextMessages(message.responseMessages, message.content, message.thinking);
+
+    // Persist AFTER contextHistory is updated so tool-call chains are saved correctly.
+    // (displayAssistantMessage() also persists for UI history, but at that point contextHistory
+    // hasn't been appended with responseMessages yet.)
+    this.persistHistory?.();
+
     if (message.usage?.inputTokens) {
       this.updateContextUsage(message.usage.inputTokens);
     } else if (message.contextUsage?.approxTokens) {

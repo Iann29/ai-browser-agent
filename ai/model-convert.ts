@@ -4,12 +4,20 @@ import type { Message, MessageContent } from './message-schema.js';
 export function toModelMessages(history: Message[] = []): ModelMessage[] {
   const normalized = Array.isArray(history) ? history : [];
   console.log('[model-convert] toModelMessages called with', normalized.length, 'messages');
-  console.log('[model-convert] Messages summary:', normalized.map(m => ({ 
-    role: m.role, 
-    hasToolCalls: !!(m as any).toolCalls?.length,
-    toolCallsCount: (m as any).toolCalls?.length || 0,
-    contentType: Array.isArray(m.content) ? `array(${m.content.length})` : typeof m.content
-  })));
+  
+  // Detailed log of each message
+  for (let i = 0; i < normalized.length; i++) {
+    const m = normalized[i];
+    console.log(`[model-convert] Message ${i}:`, {
+      role: m.role,
+      hasToolCalls: !!(m as any).toolCalls?.length,
+      toolCallsCount: (m as any).toolCalls?.length || 0,
+      toolCallIds: (m as any).toolCalls?.map((tc: any) => tc.id) || [],
+      contentType: Array.isArray(m.content) ? `array(${m.content.length})` : typeof m.content,
+      contentPreview: typeof m.content === 'string' ? m.content.slice(0, 50) : 
+        Array.isArray(m.content) ? m.content.map((p: any) => p?.type || typeof p) : 'object',
+    });
+  }
   return normalized
     .filter((msg) => msg && msg.role)
     .map((msg) => {
@@ -101,6 +109,15 @@ function normalizeUserContent(content: MessageContent): UserContent {
 function normalizeAssistantContent(message: Message): AssistantContent {
   const parts: AssistantContent = [];
 
+  console.log('[model-convert] normalizeAssistantContent called:', {
+    hasThinking: !!message.thinking,
+    contentType: typeof message.content,
+    contentLength: typeof message.content === 'string' ? message.content.length : Array.isArray(message.content) ? message.content.length : 0,
+    hasToolCalls: !!message.toolCalls,
+    toolCallsCount: message.toolCalls?.length || 0,
+    toolCallIds: message.toolCalls?.map(tc => tc.id) || [],
+  });
+
   // Add reasoning/thinking if present
   if (message.thinking) {
     parts.push({ type: 'reasoning', text: message.thinking } as const);
@@ -123,15 +140,23 @@ function normalizeAssistantContent(message: Message): AssistantContent {
 
   // Add tool calls if present - this is critical for maintaining the message chain
   if (message.toolCalls && Array.isArray(message.toolCalls) && message.toolCalls.length > 0) {
+    console.log('[model-convert] Adding tool-call parts for', message.toolCalls.length, 'tool calls');
     for (const tc of message.toolCalls) {
-      parts.push({
-        type: 'tool-call',
+      const toolCallPart = {
+        type: 'tool-call' as const,
         toolCallId: tc.id || `tool_${Date.now()}`,
         toolName: tc.name || 'unknown',
         input: tc.args || {},
-      } as const);
+      };
+      console.log('[model-convert] Adding tool-call part:', toolCallPart);
+      parts.push(toolCallPart);
     }
   }
+
+  console.log('[model-convert] normalizeAssistantContent result:', {
+    partsCount: parts.length,
+    partTypes: parts.map(p => (p as { type: string }).type),
+  });
 
   // Return parts array or empty string if no content
   if (parts.length === 0) return '';

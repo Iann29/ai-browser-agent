@@ -1,6 +1,180 @@
-import { normalizeConversationHistory } from '../../ai/message-schema.js';
+import { createMessage, normalizeConversationHistory } from '../../ai/message-schema.js';
 import { dedupeThinking, extractThinking } from '../../ai/message-utils.js';
 import { SidePanelUI } from './panel-ui.js';
+
+function collectToolResultIds(msg: any): string[] {
+  if (!msg || msg.role !== 'tool') return [];
+
+  const ids: string[] = [];
+  if (typeof msg.toolCallId === 'string' && msg.toolCallId) {
+    ids.push(msg.toolCallId);
+  }
+
+  // Handle AI-SDK style tool messages: content is an array of { type: 'tool-result', toolCallId, ... }
+  if (Array.isArray(msg.content)) {
+    for (const part of msg.content) {
+      const id = part?.toolCallId || part?.tool_use_id || part?.id;
+      if (typeof id === 'string' && id) ids.push(id);
+    }
+  }
+
+  return ids;
+}
+
+function collectAssistantToolCallIds(msg: any): string[] {
+  if (!msg || msg.role !== 'assistant') return [];
+  if (!Array.isArray(msg.toolCalls)) return [];
+  return msg.toolCalls
+    .map((tc: any) => (typeof tc?.id === 'string' ? tc.id : ''))
+    .filter(Boolean);
+}
+
+function trimHistoryPreservingToolChains(history: any[], maxMessages: number): any[] {
+  const messages = Array.isArray(history) ? history : [];
+  if (messages.length <= maxMessages) return messages;
+
+  const trimmedReversed: any[] = [];
+  const requiredToolCallIds = new Set<string>();
+
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const msg = messages[i];
+    trimmedReversed.push(msg);
+
+    if (msg?.role === 'tool') {
+      for (const id of collectToolResultIds(msg)) {
+        requiredToolCallIds.add(id);
+      }
+    } else if (msg?.role === 'assistant') {
+      for (const id of collectAssistantToolCallIds(msg)) {
+        requiredToolCallIds.delete(id);
+      }
+    }
+
+    const atLimit = trimmedReversed.length >= maxMessages;
+    if (atLimit && requiredToolCallIds.size === 0) {
+      break;
+    }
+  }
+
+  const trimmed = trimmedReversed.reverse();
+
+  // If we still start with tool messages, drop them to avoid orphan tool results.
+  while (trimmed.length > 0 && trimmed[0]?.role === 'tool') {
+    trimmed.shift();
+  }
+
+  return trimmed;
+}
+
+function buildContextFromDisplayTranscript(displayTranscript: any[]): any[] {
+  const normalized = normalizeConversationHistory(displayTranscript || []);
+  const repaired: any[] = [];
+
+  for (const msg of normalized) {
+    if (msg?.role !== 'tool') {
+      repaired.push(msg);
+      continue;
+    }
+
+    const toolCallId = msg.toolCallId;
+    const toolName = msg.toolName || msg.name || 'tool';
+    let args: Record<string, unknown> = {};
+
+    if (typeof toolCallId === 'string' && toolCallId) {
+      try {
+        const parsed = typeof msg.content === 'string' ? JSON.parse(msg.content) : null;
+        if (parsed?.args && typeof parsed.args === 'object') {
+          args = parsed.args as Record<string, unknown>;
+        }
+      } catch {
+        // ignore
+      }
+
+      // Synthesize the missing assistant tool-call message so the provider can
+      // validate tool_call_id/toolCallId references.
+      const assistantToolCall = createMessage({
+        role: 'assistant',
+        content: '',
+        toolCalls: [
+          {
+            id: toolCallId,
+            name: String(toolName || 'tool'),
+            args,
+          },
+        ],
+        meta: { kind: 'tool', source: 'history-repair' },
+      });
+      if (assistantToolCall) {
+        repaired.push(assistantToolCall);
+      }
+    }
+
+    repaired.push(msg);
+  }
+
+  return normalizeConversationHistory(repaired);
+}
+
+
+function buildContextHistoryFromLegacyTranscript(transcript: any[]) {
+  const normalized = normalizeConversationHistory(transcript || []);
+  const output: any[] = [];
+  const seenToolCalls = new Set<string>();
+
+  for (const msg of normalized) {
+    if (msg?.role === 'assistant' && Array.isArray((msg as any).toolCalls)) {
+      for (const call of (msg as any).toolCalls) {
+        if (call?.id) seenToolCalls.add(String(call.id));
+      }
+    }
+
+    if (msg?.role === 'tool') {
+      const toolCallId = (msg as any).toolCallId;
+      if (toolCallId && !seenToolCalls.has(String(toolCallId))) {
+        let toolName = (msg as any).toolName || (msg as any).name || 'tool';
+        let args: Record<string, unknown> = {};
+
+        if (typeof msg.content === 'string') {
+          try {
+            const parsed = JSON.parse(msg.content);
+            if (parsed?.args && typeof parsed.args === 'object') {
+              args = parsed.args as Record<string, unknown>;
+            }
+            if (typeof parsed?.toolName === 'string') {
+              toolName = parsed.toolName;
+            }
+          } catch {
+            // ignore
+          }
+        }
+
+        const stub = createMessage({
+          role: 'assistant',
+          content: '',
+          toolCalls: [
+            {
+              id: String(toolCallId),
+              name: String(toolName),
+              args,
+            },
+          ],
+          meta: {
+            kind: 'tool',
+            source: 'history-repair',
+          },
+        });
+        if (stub) {
+          output.push(stub);
+          seenToolCalls.add(String(toolCallId));
+        }
+      }
+    }
+
+    output.push(msg);
+  }
+
+  return normalizeConversationHistory(output);
+}
 
 (SidePanelUI.prototype as any).persistHistory = async function persistHistory() {
   // Default to saving history unless explicitly disabled in config
@@ -11,13 +185,18 @@ import { SidePanelUI } from './panel-ui.js';
   // Only persist if there's actual content
   if (!this.displayHistory || this.displayHistory.length === 0) return;
   
+  const displayTranscript = this.displayHistory.slice(-200);
+  const contextTranscript = trimHistoryPreservingToolChains(this.contextHistory, 400);
+
   const entry = {
     id: this.sessionId,
     startedAt: this.sessionStartedAt,
     updatedAt: Date.now(),
     title: this.firstUserMessage || 'Session',
     messageCount: this.displayHistory.length,
-    transcript: this.displayHistory.slice(-200),
+    transcript: displayTranscript,
+    // Separate context transcript for API/tool-call correctness.
+    contextTranscript,
   };
   
   try {
@@ -107,16 +286,24 @@ import { SidePanelUI } from './panel-ui.js';
 
 (SidePanelUI.prototype as any).loadSession = function loadSession(session: any) {
   this.switchView('chat');
-  if (Array.isArray(session.transcript)) {
-    this.recordScrollPosition();
-    const normalized = normalizeConversationHistory(session.transcript || []);
-    this.displayHistory = normalized;
-    this.contextHistory = normalized;
-    this.sessionId = session.id || `session-${Date.now()}`;
-    this.firstUserMessage = session.title || '';
-    this.renderConversationHistory();
-    this.updateContextUsage();
+  if (!Array.isArray(session.transcript) && !Array.isArray(session.contextTranscript)) return;
+
+  this.recordScrollPosition();
+
+  const displayNormalized = normalizeConversationHistory(session.transcript || []);
+  this.displayHistory = displayNormalized;
+
+  if (Array.isArray(session.contextTranscript) && session.contextTranscript.length > 0) {
+    this.contextHistory = normalizeConversationHistory(session.contextTranscript || []);
+  } else {
+    // Back-compat: older sessions only stored UI transcript (missing assistant toolCalls).
+    this.contextHistory = buildContextFromDisplayTranscript(session.transcript || []);
   }
+
+  this.sessionId = session.id || `session-${Date.now()}`;
+  this.firstUserMessage = session.title || '';
+  this.renderConversationHistory();
+  this.updateContextUsage();
 };
 
 (SidePanelUI.prototype as any).deleteSession = async function deleteSession(sessionId: string) {

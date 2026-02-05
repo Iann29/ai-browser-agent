@@ -127,16 +127,9 @@ import { SidePanelUI } from './panel-ui.js';
       `;
     item.addEventListener('click', () => {
       this.openHistoryFromAccount();
-      if (Array.isArray(session.transcript)) {
-        this.recordScrollPosition();
-        const normalized = normalizeConversationHistory(session.transcript || []);
-        this.displayHistory = normalized;
-        this.contextHistory = normalized;
-        this.sessionId = session.id || `session-${Date.now()}`;
-        this.firstUserMessage = session.title || '';
-        this.renderConversationHistory();
-        this.updateContextUsage();
-      }
+      // Delegate to the canonical session loader (panel-history.ts) to ensure
+      // we restore both display + context transcripts consistently.
+      this.loadSession?.(session);
     });
     this.elements.accountHistory.appendChild(item);
   });
