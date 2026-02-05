@@ -754,12 +754,15 @@ class BackgroundService {
   ): Message[] {
     const messages: Message[] = [];
 
+    console.log('[Background] buildResponseMessagesFromSteps called with', steps.length, 'steps');
+
     // Process each step to build the proper message chain
     // AI SDK StepResult has: toolCalls (with toolCallId, toolName, input) and toolResults (with toolCallId, toolName, output)
     for (const step of steps) {
       // If this step has tool calls, add an assistant message with those calls
       const toolCalls = step.toolCalls as Array<{ toolCallId: string; toolName: string; input?: unknown }> | undefined;
       if (toolCalls && toolCalls.length > 0) {
+        console.log('[Background] Step has', toolCalls.length, 'tool calls:', toolCalls.map(tc => ({ id: tc.toolCallId, name: tc.toolName })));
         messages.push({
           role: 'assistant',
           content: step.text || '',
@@ -775,6 +778,7 @@ class BackgroundService {
       // AI SDK uses 'output' not 'result' in TypedToolResult
       const toolResults = step.toolResults as Array<{ toolCallId: string; toolName: string; output?: unknown }> | undefined;
       if (toolResults && toolResults.length > 0) {
+        console.log('[Background] Step has', toolResults.length, 'tool results:', toolResults.map(tr => ({ id: tr.toolCallId, name: tr.toolName })));
         messages.push({
           role: 'tool',
           content: toolResults.map((tr) => ({
@@ -796,6 +800,9 @@ class BackgroundService {
       content: finalText,
       thinking: reasoningText || null,
     });
+
+    console.log('[Background] buildResponseMessagesFromSteps returning', messages.length, 'messages:', 
+      messages.map(m => ({ role: m.role, hasToolCalls: !!(m as any).toolCalls?.length, contentType: Array.isArray(m.content) ? 'array' : typeof m.content })));
 
     return messages;
   }

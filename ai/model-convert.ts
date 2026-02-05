@@ -3,6 +3,13 @@ import type { Message, MessageContent } from './message-schema.js';
 
 export function toModelMessages(history: Message[] = []): ModelMessage[] {
   const normalized = Array.isArray(history) ? history : [];
+  console.log('[model-convert] toModelMessages called with', normalized.length, 'messages');
+  console.log('[model-convert] Messages summary:', normalized.map(m => ({ 
+    role: m.role, 
+    hasToolCalls: !!(m as any).toolCalls?.length,
+    toolCallsCount: (m as any).toolCalls?.length || 0,
+    contentType: Array.isArray(m.content) ? `array(${m.content.length})` : typeof m.content
+  })));
   return normalized
     .filter((msg) => msg && msg.role)
     .map((msg) => {
@@ -33,11 +40,14 @@ export function toModelMessages(history: Message[] = []): ModelMessage[] {
 
 function normalizeToolContent(message: Message): ToolContent {
   const content = message.content;
+  console.log('[model-convert] normalizeToolContent called, content type:', Array.isArray(content) ? 'array' : typeof content);
   if (Array.isArray(content)) {
     const parts = content.filter((part) => part && typeof part === 'object' && 'type' in part) as ToolResultPart[];
+    console.log('[model-convert] Found', parts.length, 'tool-result parts in array');
     if (parts.length) return parts;
   }
-  const toolCallId = message.toolCallId || message.tool_call_id || `tool_${Date.now()}`;
+  const toolCallId = message.toolCallId || (message as any).tool_call_id || `tool_${Date.now()}`;
+  console.log('[model-convert] Creating single tool-result with toolCallId:', toolCallId);
   return [
     {
       type: 'tool-result',
