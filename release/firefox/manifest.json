@@ -1,8 +1,8 @@
 {
   "manifest_version": 2,
-  "name": "Parchi",
+  "name": "AI Browser",
   "version": "0.2.0",
-  "description": "Warm-paper browser automation assistant with configurable LLM/vision profiles and enterprise-ready controls",
+  "description": "AI-powered browser automation assistant with configurable LLM/vision profiles and enterprise-ready controls",
   "permissions": [
     "activeTab",
     "scripting",
@@ -41,6 +41,6 @@
     }
   },
   "browser_action": {
-    "default_title": "Parchi Panel"
+    "default_title": "AI Browser"
   }
 }

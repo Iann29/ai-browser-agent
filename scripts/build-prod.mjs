@@ -159,7 +159,7 @@ const run = async () => {
   removeTests(chromeDir);
   
   // Criar zip (conteúdo na raiz)
-  const chromeZip = path.join(releaseDir, 'parchi-chrome-v0.2.0.zip');
+  const chromeZip = path.join(releaseDir, 'ai-browser-chrome-v0.2.0.zip');
   console.log(`  📦 Criando ${path.basename(chromeZip)}...`);
   
   try {
@@ -195,7 +195,7 @@ const run = async () => {
   removeTests(firefoxDir);
   
   // Criar zip
-  const firefoxZip = path.join(releaseDir, 'parchi-firefox-v0.2.0.zip');
+  const firefoxZip = path.join(releaseDir, 'ai-browser-firefox-v0.2.0.zip');
   console.log(`  📦 Criando ${path.basename(firefoxZip)}...`);
   
   try {
@@ -213,8 +213,8 @@ const run = async () => {
   console.log('✅ Build de Produção Completo!');
   console.log('='.repeat(50));
   console.log(`\n📁 Arquivos em: ${releaseDir}/`);
-  console.log('  📦 parchi-chrome-v0.2.0.zip  → Chrome Web Store');
-  console.log('  📦 parchi-firefox-v0.2.0.zip → Firefox Add-ons');
+  console.log('  📦 ai-browser-chrome-v0.2.0.zip  → Chrome Web Store');
+  console.log('  📦 ai-browser-firefox-v0.2.0.zip → Firefox Add-ons');
   console.log('\n📂 Pastas para teste:');
   console.log('  📁 release/chrome/  → Carregar em chrome://extensions');
   console.log('  📁 release/firefox/ → Carregar em about:debugging');
