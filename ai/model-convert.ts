@@ -89,26 +89,46 @@ function normalizeUserContent(content: MessageContent): UserContent {
 }
 
 function normalizeAssistantContent(message: Message): AssistantContent {
+  const parts: AssistantContent = [];
+
+  // Add reasoning/thinking if present
   if (message.thinking) {
-    const text = typeof message.content === 'string' ? message.content : '';
-    return [{ type: 'reasoning', text: message.thinking } as const, { type: 'text', text } as const];
+    parts.push({ type: 'reasoning', text: message.thinking } as const);
   }
-  if (typeof message.content === 'string') return message.content;
-  if (Array.isArray(message.content)) {
-    return message.content
-      .map((part) => {
-        if (typeof part === 'string') return { type: 'text', text: part } as const;
-        if (part && typeof part === 'object' && 'text' in part && typeof part.text === 'string') {
-          return { type: 'text', text: part.text } as const;
-        }
-        return null;
-      })
-      .filter((part): part is { type: 'text'; text: string } => part !== null);
+
+  // Add text content
+  if (typeof message.content === 'string' && message.content) {
+    parts.push({ type: 'text', text: message.content } as const);
+  } else if (Array.isArray(message.content)) {
+    for (const part of message.content) {
+      if (typeof part === 'string' && part) {
+        parts.push({ type: 'text', text: part } as const);
+      } else if (part && typeof part === 'object' && 'text' in part && typeof part.text === 'string' && part.text) {
+        parts.push({ type: 'text', text: part.text } as const);
+      }
+    }
+  } else if (message.content && typeof message.content === 'object') {
+    parts.push({ type: 'text', text: JSON.stringify(message.content) } as const);
   }
-  if (message.content && typeof message.content === 'object') {
-    return JSON.stringify(message.content);
+
+  // Add tool calls if present - this is critical for maintaining the message chain
+  if (message.toolCalls && Array.isArray(message.toolCalls) && message.toolCalls.length > 0) {
+    for (const tc of message.toolCalls) {
+      parts.push({
+        type: 'tool-call',
+        toolCallId: tc.id || `tool_${Date.now()}`,
+        toolName: tc.name || 'unknown',
+        input: tc.args || {},
+      } as const);
+    }
   }
-  return '';
+
+  // Return parts array or empty string if no content
+  if (parts.length === 0) return '';
+  if (parts.length === 1 && parts[0].type === 'text') {
+    return (parts[0] as { type: 'text'; text: string }).text;
+  }
+  return parts;
 }
 
 function normalizeSystemContent(content: MessageContent) {

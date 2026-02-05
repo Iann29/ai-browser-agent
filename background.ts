@@ -335,6 +335,7 @@ class BackgroundService {
             reasoningText: reasoning || null,
             totalUsage: normalizedUsage,
             toolResults: steps.flatMap((step) => step.toolResults || []),
+            steps,
           };
         } catch (error) {
           // Ensure stream stop is sent even on error
@@ -431,27 +432,9 @@ class BackgroundService {
           ? cleanedText || fallbackText
           : 'I completed the requested actions but could not produce a final summary. Please try again.';
 
-        responseMessages = [
-          {
-            role: 'assistant',
-            content: finalText,
-            thinking: reasoningText || null,
-          },
-        ];
-        if (toolResults.length > 0) {
-          responseMessages.push({
-            role: 'tool',
-            content: toolResults.map((resultItem) => ({
-              type: 'tool-result',
-              toolCallId: resultItem.toolCallId,
-              toolName: resultItem.toolName,
-              output:
-                resultItem.output && typeof resultItem.output === 'object'
-                  ? { type: 'json', value: resultItem.output }
-                  : { type: 'text', value: String(resultItem.output ?? '') },
-            })),
-          });
-        }
+        // Build responseMessages from steps to preserve the proper message chain:
+        // assistant (with tool-calls) -> tool (with tool-results) -> ... -> assistant (final)
+        responseMessages = this.buildResponseMessagesFromSteps(passResult.steps || [], finalText, reasoningText);
 
         break;
         } catch (passError) {
@@ -762,6 +745,59 @@ class BackgroundService {
     const enrichedResult = this.attachPlanToResult(finalResult, toolName);
     sendResult(enrichedResult);
     return enrichedResult;
+  }
+
+  buildResponseMessagesFromSteps(
+    steps: Array<Record<string, any>>,
+    finalText: string,
+    reasoningText: string | null,
+  ): Message[] {
+    const messages: Message[] = [];
+
+    // Process each step to build the proper message chain
+    // AI SDK StepResult has: toolCalls (with toolCallId, toolName, input) and toolResults (with toolCallId, toolName, output)
+    for (const step of steps) {
+      // If this step has tool calls, add an assistant message with those calls
+      const toolCalls = step.toolCalls as Array<{ toolCallId: string; toolName: string; input?: unknown }> | undefined;
+      if (toolCalls && toolCalls.length > 0) {
+        messages.push({
+          role: 'assistant',
+          content: step.text || '',
+          toolCalls: toolCalls.map((tc) => ({
+            id: tc.toolCallId,
+            name: tc.toolName,
+            args: (tc.input && typeof tc.input === 'object' ? tc.input : {}) as Record<string, unknown>,
+          })),
+        });
+      }
+
+      // If this step has tool results, add a tool message with those results
+      // AI SDK uses 'output' not 'result' in TypedToolResult
+      const toolResults = step.toolResults as Array<{ toolCallId: string; toolName: string; output?: unknown }> | undefined;
+      if (toolResults && toolResults.length > 0) {
+        messages.push({
+          role: 'tool',
+          content: toolResults.map((tr) => ({
+            type: 'tool-result',
+            toolCallId: tr.toolCallId,
+            toolName: tr.toolName,
+            output:
+              tr.output && typeof tr.output === 'object'
+                ? { type: 'json', value: tr.output }
+                : { type: 'text', value: String(tr.output ?? '') },
+          })),
+        });
+      }
+    }
+
+    // Add the final assistant message with the complete response
+    messages.push({
+      role: 'assistant',
+      content: finalText,
+      thinking: reasoningText || null,
+    });
+
+    return messages;
   }
 
   attachPlanToResult(result: unknown, toolName: string) {
