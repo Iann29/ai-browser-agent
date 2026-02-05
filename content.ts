@@ -65,10 +65,14 @@ class ContentScriptHandler {
           break;
 
         default:
-          sendResponse({ success: false, error: 'Unknown action' });
+          sendResponse({ success: false, error: `Unknown action: ${message.action}` });
       }
     } catch (error) {
-      sendResponse({ success: false, error: error.message });
+      console.error('[Content Script] Error handling message:', error);
+      sendResponse({ 
+        success: false, 
+        error: error?.message || String(error) || 'Unknown error in content script',
+      });
     }
   }
 

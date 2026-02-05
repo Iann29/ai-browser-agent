@@ -317,13 +317,77 @@ export class BrowserTools {
     return active?.id ?? null;
   }
 
+  private async isUrlAccessible(tabId: number): Promise<{ accessible: boolean; url?: string; reason?: string }> {
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      if (!tab.url) {
+        return { accessible: false, reason: 'Tab URL not available' };
+      }
+      
+      // Check for restricted URL schemes
+      const restrictedSchemes = [
+        'chrome://',
+        'chrome-extension://',
+        'devtools://',
+        'edge://',
+        'brave://',
+        'about:',
+        'file://',
+        'javascript:',
+        'data:',
+        'view-source:',
+      ];
+      
+      const url = tab.url.toLowerCase();
+      for (const scheme of restrictedSchemes) {
+        if (url.startsWith(scheme)) {
+          return { 
+            accessible: false, 
+            url: tab.url,
+            reason: `Cannot access ${scheme} URLs for security reasons`,
+          };
+        }
+      }
+      
+      return { accessible: true, url: tab.url };
+    } catch (error) {
+      return { 
+        accessible: false, 
+        reason: `Failed to get tab info: ${error?.message || String(error)}`,
+      };
+    }
+  }
+
   private async runInTab(tabId: number, func: (...args: any[]) => unknown, args: any[] = []): Promise<any> {
-    const results = await chrome.scripting.executeScript({
-      target: { tabId },
-      func,
-      args,
-    });
-    return results?.[0]?.result ?? null;
+    // Check if URL is accessible before attempting to run script
+    const accessCheck = await this.isUrlAccessible(tabId);
+    if (!accessCheck.accessible) {
+      return {
+        success: false,
+        error: accessCheck.reason,
+        hint: 'Navigate to a regular website (http:// or https://) to use this feature.',
+      };
+    }
+    
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        func,
+        args,
+      });
+      return results?.[0]?.result ?? null;
+    } catch (error) {
+      // Handle specific error cases
+      const errorMessage = error?.message || String(error);
+      if (errorMessage.includes('Cannot access contents of url')) {
+        return {
+          success: false,
+          error: 'Cannot access this page due to browser security restrictions.',
+          hint: 'Try navigating to a different website, or check if this is a special browser page.',
+        };
+      }
+      throw error; // Re-throw for other errors to be handled by executeTool
+    }
   }
 
   private async navigate(args: Record<string, any>) {

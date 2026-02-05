@@ -86,7 +86,12 @@ class BackgroundService {
   async handleMessage(message, sender, sendResponse) {
     try {
       switch (message.type) {
-        case 'user_message':
+        case 'user_message': {
+          // Process user message asynchronously
+          // Note: We send initial response immediately, then process
+          sendResponse({ success: true, status: 'processing' });
+          
+          // Process after sending response to prevent channel timeout
           await this.processUserMessage(
             message.message,
             message.conversationHistory,
@@ -94,6 +99,7 @@ class BackgroundService {
             message.sessionId || `session-${Date.now()}`,
           );
           break;
+        }
 
         case 'execute_tool': {
           const result = await this.browserTools.executeTool(message.tool, message.args);
@@ -103,6 +109,7 @@ class BackgroundService {
 
         default:
           console.warn('Unknown message type:', message.type);
+          sendResponse({ success: false, error: `Unknown message type: ${message.type}` });
       }
     } catch (error) {
       console.error('Error handling message:', error);
@@ -282,49 +289,77 @@ class BackgroundService {
           },
         });
 
-        if (streamEnabled) {
-          try {
-            for await (const textPart of result.textStream) {
-              this.sendRuntime(runMeta, {
-                type: 'assistant_stream_delta',
-                content: textPart || '',
-                channel: 'text',
-              });
+        // Timeout handling - 5 minutes max for a single pass
+        const timeoutMs = settings.timeout ? Number(settings.timeout) * 1000 : 300000;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error(`Request timeout after ${timeoutMs / 1000}s`)), timeoutMs);
+        });
+
+        try {
+          if (streamEnabled) {
+            try {
+              // Race between stream and timeout
+              const streamPromise = (async () => {
+                for await (const textPart of result.textStream) {
+                  this.sendRuntime(runMeta, {
+                    type: 'assistant_stream_delta',
+                    content: textPart || '',
+                    channel: 'text',
+                  });
+                }
+              })();
+              
+              await Promise.race([streamPromise, timeoutPromise]);
+            } finally {
+              this.sendRuntime(runMeta, { type: 'assistant_stream_stop' });
             }
-          } finally {
+          } else {
+            await Promise.race([result.text, timeoutPromise]);
+          }
+
+          const [text, reasoning, usage, steps] = await Promise.all([
+            result.text,
+            result.reasoningText,
+            result.totalUsage,
+            result.steps,
+          ]);
+
+          const normalizedUsage = {
+            inputTokens: Number(usage?.inputTokens || 0),
+            outputTokens: Number(usage?.outputTokens || 0),
+            totalTokens: Number(usage?.totalTokens || 0),
+          };
+
+          return {
+            text: text || '',
+            reasoningText: reasoning || null,
+            totalUsage: normalizedUsage,
+            toolResults: steps.flatMap((step) => step.toolResults || []),
+          };
+        } catch (error) {
+          // Ensure stream stop is sent even on error
+          if (streamEnabled) {
             this.sendRuntime(runMeta, { type: 'assistant_stream_stop' });
           }
-        } else {
-          await result.text;
+          
+          // Log and re-throw with context
+          console.error('[Background] Error in model pass:', error);
+          
+          if (error.message?.includes('timeout')) {
+            throw new Error(`The request timed out after ${timeoutMs / 1000} seconds. Try sending "continue" to resume, or break your request into smaller steps.`);
+          }
+          
+          throw error;
         }
-
-        const [text, reasoning, usage, steps] = await Promise.all([
-          result.text,
-          result.reasoningText,
-          result.totalUsage,
-          result.steps,
-        ]);
-
-        const normalizedUsage = {
-          inputTokens: Number(usage?.inputTokens || 0),
-          outputTokens: Number(usage?.outputTokens || 0),
-          totalTokens: Number(usage?.totalTokens || 0),
-        };
-
-        return {
-          text: text || '',
-          reasoningText: reasoning || null,
-          totalUsage: normalizedUsage,
-          toolResults: steps.flatMap((step) => step.toolResults || []),
-        };
       };
 
       while (true) {
-        const passResult = await runModelPass(currentHistory);
-        const xmlToolCalls = this.extractXmlToolCalls(passResult.text);
-        toolResults = passResult.toolResults || [];
+        try {
+          const passResult = await runModelPass(currentHistory);
+          const xmlToolCalls = this.extractXmlToolCalls(passResult.text);
+          toolResults = passResult.toolResults || [];
 
-        if (xmlToolCalls.length > 0 && toolResults.length === 0 && recoveryAttempt < maxRecoveryAttempts) {
+          if (xmlToolCalls.length > 0 && toolResults.length === 0 && recoveryAttempt < maxRecoveryAttempts) {
           this.sendRuntime(runMeta, {
             type: 'run_warning',
             message: 'Detected XML tool call output. Executing tools and retrying.',
@@ -419,6 +454,31 @@ class BackgroundService {
         }
 
         break;
+        } catch (passError) {
+          // Handle errors within the model pass loop
+          console.error('[Background] Error in model pass iteration:', passError);
+          
+          // Send error to sidepanel
+          this.sendRuntime(runMeta, {
+            type: 'run_error',
+            message: passError.message || 'Error during processing',
+          });
+          
+          // If it's a timeout or connection error, suggest continuing
+          if (passError.message?.includes('timeout') || passError.message?.includes('network')) {
+            this.sendRuntime(runMeta, {
+              type: 'assistant_final',
+              content: `⚠️ ${passError.message}\n\nYou can send "continue" to resume from where we left off.`,
+              thinking: null,
+              model: orchestratorProfile.model || settings.model || '',
+              usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+              responseMessages: [],
+            });
+          }
+          
+          // Exit the loop on error
+          break;
+        }
       }
 
       this.sendRuntime(runMeta, {
